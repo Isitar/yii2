@@ -18,6 +18,7 @@ namespace yii\log {
 
 namespace yiiunit\framework\log {
 
+    use yiiunit\framework\log\mocks\TargetMock;
     use Yii;
     use yii\base\UserException;
     use yii\log\Dispatcher;
@@ -86,16 +87,6 @@ namespace yiiunit\framework\log {
             ]);
             $this->assertInstanceOf('yii\log\Logger', $dispatcher->getLogger());
             $this->assertEquals(42, $dispatcher->getLogger()->traceLevel);
-        }
-
-        public function testSetNewLoggerUpdatesGlobalLogger()
-        {
-            $dispatcher = new Dispatcher();
-            $this->assertSame(Yii::getLogger(), $dispatcher->getLogger());
-
-            $newLogger = new Logger();
-            $dispatcher->setLogger($newLogger);
-            $this->assertSame(Yii::getLogger(), $dispatcher->getLogger());
         }
 
         /**
@@ -291,6 +282,40 @@ namespace yiiunit\framework\log {
                 return forward_static_call(static::$functions[$name], $arguments);
             }
             static::fail("Function '$name' has not implemented yet!");
+        }
+
+        private $targetThrowFirstCount;
+        private $targetThrowSecondOutputs;
+
+        public function testTargetThrow()
+        {
+            $this->targetThrowFirstCount = 0;
+            $this->targetThrowSecondOutputs = [];
+            $targetFirst = new TargetMock([
+                'collectOverride' => function () {
+                    $this->targetThrowFirstCount++;
+                    if (PHP_MAJOR_VERSION < 7) {
+                        throw new \RuntimeException('test');
+                    }
+                    require_once __DIR__ . DIRECTORY_SEPARATOR . 'mocks' . DIRECTORY_SEPARATOR . 'typed_error.php';
+                    typed_error_test_mock([]);
+                }
+            ]);
+            $targetSecond = new TargetMock([
+                'collectOverride' => function ($message, $final) {
+                    $this->targetThrowSecondOutputs[] = array_pop($message);
+                }
+            ]);
+            $dispatcher = new Dispatcher([
+                'logger' => new Logger(),
+                'targets' => [$targetFirst, $targetSecond],
+            ]);
+            $message = 'test' . time();
+            $dispatcher->dispatch([$message], false);
+            $this->assertSame(1, $this->targetThrowFirstCount);
+            $this->assertSame(2, count($this->targetThrowSecondOutputs));
+            $this->assertSame($message, array_shift($this->targetThrowSecondOutputs));
+            $this->assertStringStartsWith('Unable to send log via', array_shift($this->targetThrowSecondOutputs)[0]);
         }
     }
 }
